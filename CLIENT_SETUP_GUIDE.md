@@ -202,3 +202,41 @@ Every morning, the client just double-clicks this desktop shortcut to launch the
 2. Go to the `backup/` folder and copy your desired backup file (e.g. `pharmacy-2026-09-17-025733.db`).
 3. Paste it into the `prisma/` folder and rename it to `dev.db` (overwrite existing).
 4. Restart the server via `start-server.bat`.
+
+### 4. Can the system start by itself after a power cut or PC restart?
+Yes — install the optional 24/7 auto-start once, from an **Administrator** PowerShell:
+
+```powershell
+cd C:\PharmacyApp
+npm run autostart
+```
+
+This registers two Windows tasks that start at **every boot** without anyone logging in:
+
+| Task | Purpose |
+| :--- | :--- |
+| `BMH Pharmacy Server` | web app on port `3000` |
+| `BMH Pharmacy Tunnel` | keeps the ngrok public internet link online |
+
+They have no time limit, do **not** stop when the PC is idle, and restart the server/tunnel automatically if they crash. Check them any time with:
+
+```powershell
+Get-ScheduledTask -TaskName "BMH Pharmacy *" | Format-Table TaskName, State
+```
+
+To remove the auto-start: `npm run autostart:remove`. Full details are in section **6a** of [README.md](README.md).
+
+### 5. The public ngrok link shows "ERR_NGROK_3200 - endpoint is offline"
+That message only means the tunnel process is not running on the server PC:
+- **With 24/7 auto-start installed:** check the task is alive (command above) and read `logs\tunnel.log`. Also make sure the PC has an internet connection.
+- **Without auto-start:** start it manually on the server PC with `npm run tunnel` (or `scripts\tunnel.bat`) and leave that window open.
+- The public URL itself never changes, so you never need to share a new link.
+
+### 6. Where are the log files?
+| File | Contents |
+| :--- | :--- |
+| `logs\server.log` | Web server output (auto-rotated at ~5 MB) |
+| `logs\tunnel.log` | ngrok tunnel output: the public URL plus every reconnect/restart |
+
+### 7. Does the pharmacy still work without internet?
+Yes. The local Wi-Fi app (`http://<server IP>:3000`) is completely offline and keeps working with no internet at all. Only the optional public ngrok link (accessed from outside the pharmacy) needs internet.

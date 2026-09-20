@@ -46,7 +46,7 @@ echo.
 echo ======================================================================
 echo  🚀 SERVER IS STARTING!
 echo  👉 Local Access:   http://localhost:3000
-echo  🔑 Default Login:  ADMIN / PIN: 1234
+echo  🔑 Default Login:  RASEL / PIN: admin1234
 echo ======================================================================
 echo.
 

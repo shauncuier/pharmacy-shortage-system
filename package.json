@@ -7,10 +7,18 @@
     "build": "node scripts/ensure-setup.mjs && next build",
     "start": "next start -H 0.0.0.0",
     "setup": "node scripts/ensure-setup.mjs",
+    "seed": "prisma db seed",
+    "seed:medex": "node scripts/import-medex-to-db.mjs && node scripts/populate-proper-prices.mjs",
+    "create:superuser": "node scripts/create-superuser.mjs",
+    "tunnel": "node scripts/ngrok-tunnel.mjs",
+    "autostart": "powershell -ExecutionPolicy Bypass -File scripts\\install-autostart.ps1",
+    "autostart:dry-run": "powershell -ExecutionPolicy Bypass -File scripts\\install-autostart.ps1 -DryRun",
+    "autostart:remove": "powershell -ExecutionPolicy Bypass -File scripts\\install-autostart.ps1 -Uninstall",
     "postinstall": "node scripts/ensure-setup.mjs",
     "lint": "eslint"
   },
   "dependencies": {
+    "@ngrok/ngrok": "^1.7.0",
     "@prisma/client": "6.4.1",
     "@types/qrcode": "^1.5.6",
     "bcryptjs": "^3.0.3",

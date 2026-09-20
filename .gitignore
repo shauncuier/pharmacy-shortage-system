@@ -46,3 +46,6 @@ next-env.d.ts
 *.sqlite
 *.sqlite3
 /backup/
+
+# runtime logs
+/logs/

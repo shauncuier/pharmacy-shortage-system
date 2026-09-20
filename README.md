@@ -194,6 +194,67 @@ To prevent the server's IP address from changing when the router restarts:
 
 ---
 
+## 6a. 24/7 Unattended Operation (Auto-Start After Every Reboot)
+
+The pharmacy PC can be left completely unattended: Windows starts **both** the web server and the ngrok tunnel at boot, keeps them running, and brings them back after a power cut, reboot, or crash.
+
+### Install the auto-start tasks (once, as Administrator)
+
+Open **PowerShell as Administrator** (right-click Start → *Terminal (Admin)*), then:
+
+```powershell
+cd F:\pharmacy-shortage-system
+npm run autostart
+```
+
+*(equivalent to: `powershell -ExecutionPolicy Bypass -File scripts\install-autostart.ps1`)*
+
+This registers two Windows Scheduled Tasks:
+
+| Task name | Runs | Purpose |
+| :--- | :--- | :--- |
+| `BMH Pharmacy Server` | `scripts\run-server.bat` | Serves the web app on port 3000 (`npm start`, production build) |
+| `BMH Pharmacy Tunnel` | `scripts\run-tunnel.bat` | Keeps the ngrok public internet address always online |
+
+Both tasks:
+
+- start automatically at **every boot**, running as `SYSTEM` (no user needs to log in),
+- re-launch 1 minute after **any logon**, as a safety net if they were closed by hand,
+- have **no execution time limit** (they are not killed after 3 days / 72 hours),
+- **never stop when the PC goes idle** — the Windows default would terminate them after 10 idle minutes, which would silently take the pharmacy offline,
+- automatically restart on failure, and each runner is itself a supervisor loop, so a crashed server or a dropped tunnel process comes back within seconds,
+- never run twice (`MultipleInstances = IgnoreNew`).
+
+### Check status and control the auto-start
+
+```powershell
+# Status (Running = healthy)
+Get-ScheduledTask -TaskName "BMH Pharmacy *" | Format-Table TaskName, State
+
+# Start / stop manually
+Get-ScheduledTask -TaskName "BMH Pharmacy *" | Start-ScheduledTask
+Get-ScheduledTask -TaskName "BMH Pharmacy *" | Stop-ScheduledTask
+
+# Validate the setup without changing anything (no admin rights needed)
+npm run autostart:dry-run
+
+# Remove auto-start completely
+npm run autostart:remove
+```
+
+### Logs (both auto-rotate at ~5 MB)
+
+| File | Contents |
+| :--- | :--- |
+| `logs\server.log` | Web server output; the public/local addresses are printed at startup |
+| `logs\tunnel.log` | ngrok output; the live public URL is printed here, plus every reconnect/restart |
+
+> ⚠️ **Do not double-run the server.** After the tasks are installed, do not also launch `start-server.bat` / `npm run dev` by hand while they are running — two processes cannot share port `3000`. Simply reboot the PC (the tasks take over automatically) or close the manual window first.
+
+> ⚠️ **The tunnel needs internet.** The ngrok tunnel is the only part of this system that requires an internet connection. If the connection drops, the tunnel supervisor just retries every 30 seconds until it comes back — the Web server and all pharmacy data stay fully local and offline.
+
+---
+
 ## 7. Connecting Android / Mobile Phones
 
 1. Connect the employee's phone to the **Pharmacy Wi-Fi**.
@@ -207,6 +268,57 @@ To prevent the server's IP address from changing when the router restarts:
    - Tap the **"Install"** button on the banner at the top of the screen.
    - Or tap the browser menu (⋮) → **"Add to Home screen"** / **"Install app"**.
    - An app icon named **"Pharmacy Short"** will appear on the phone's home screen for 1-tap launching.
+
+---
+
+## 7a. Remote / Internet Access via ngrok (Optional)
+
+By default this system is designed to run fully offline on the local pharmacy Wi-Fi. If you need to access the pharmacy server from **outside the local network** (e.g. checking shortages remotely, demoing to a client), you can expose it securely to the internet using [ngrok](https://ngrok.com).
+
+### Step 1: Get a Free ngrok Auth Token
+1. Sign up for a free account at [dashboard.ngrok.com/signup](https://dashboard.ngrok.com/signup).
+2. Copy your auth token from [dashboard.ngrok.com/get-started/your-authtoken](https://dashboard.ngrok.com/get-started/your-authtoken).
+
+### Step 2: Add the Token to `.env`
+Open `.env` in the project root and set:
+
+```env
+NGROK_AUTHTOKEN=your_actual_auth_token_here
+```
+
+### Step 3: Start the Pharmacy Server
+In one terminal, start the app as usual:
+
+```powershell
+npm run dev
+# or for production:
+npm run build && npm start
+```
+
+### Step 4: Start the ngrok Tunnel
+In a **second** terminal (same project folder), run:
+
+```powershell
+npm run tunnel
+```
+
+*(Alternatively, double-click `scripts\tunnel.bat` — same thing, in its own window. For unattended 24/7 operation use `scripts\run-tunnel.bat`, which is supervised and restarts the tunnel automatically — see section 6a.)*
+
+This uses the `@ngrok/ngrok` SDK (`scripts/ngrok-tunnel.mjs`) to forward a public `https://xxxxx.ngrok-free.app` URL to your local server on the port configured by `PORT` in `.env` (default `3000`). The public URL is printed to the terminal — share it to allow remote access from anywhere with an internet connection.
+
+**Stable URL:** because ngrok assigns your account a static free domain, the same public URL is returned on every start — no need to re-share it after a reboot. To use your own reserved/custom domain instead, set it in `.env`:
+
+```env
+NGROK_DOMAIN=my-pharmacy.ngrok.app
+```
+
+**Self-healing:** the tunnel reconnects by itself after network drops (ISP blips, router reboots, sleep/resume), and the supervisor loop in `scripts\run-tunnel.bat` relaunches the whole tunnel process if it ever exits. Output is written to `logs\tunnel.log`.
+
+> ⚠️ **Keep the tunnel window open.** The public URL is only reachable while the tunnel process is running. Closing the window (or pressing `Ctrl+C`) takes the URL offline and visitors will see `ERR_NGROK_3200 — endpoint is offline` (ngrok has no agent registered for that URL). Just re-run `npm run tunnel` to bring it back.
+
+> 💡 **First visit shows an ngrok warning page:** On free ngrok accounts, browsers first see an ngrok interstitial ("You are about to visit…") before the app loads. Click **Visit Site** to continue. API clients can bypass it by sending the header `ngrok-skip-browser-warning: 1`.
+
+> ⚠️ **Security Note:** Exposing the server to the internet bypasses the "local Wi-Fi only" security model. Only use this temporarily (e.g. remote support, demos) and stop the tunnel (`Ctrl+C`) when done. Make sure staff PINs/passwords have been changed from the defaults before exposing the app publicly.
 
 ---
 
