@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { getCurrentUser } from '@/lib/auth'
 import { Role, ShortageStatus } from '@prisma/client'
 import { getLocalDateString } from '@/lib/date-utils'
+import { notifyShortageChange } from '@/lib/shortage-events'
 
 export async function DELETE(
   _req: NextRequest,
@@ -40,6 +41,8 @@ export async function DELETE(
     await prisma.shortage.delete({
       where: { id },
     })
+
+    notifyShortageChange('delete', { shortageId: id })
 
     return NextResponse.json({ success: true, message: 'Report removed' })
   } catch (error) {
@@ -135,6 +138,8 @@ export async function PATCH(
         },
       },
     })
+
+    notifyShortageChange('update', { shortageId: id, status: updated.status })
 
     return NextResponse.json({ success: true, shortage: updated })
   } catch (error) {

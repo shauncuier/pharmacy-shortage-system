@@ -4,6 +4,7 @@ import { getCurrentUser } from '@/lib/auth'
 import { shortageCreateSchema } from '@/lib/validations'
 import { Role, ShortageStatus } from '@prisma/client'
 import { getLocalDateString } from '@/lib/date-utils'
+import { notifyShortageChange } from '@/lib/shortage-events'
 
 export async function GET(req: NextRequest) {
   try {
@@ -114,7 +115,11 @@ export async function GET(req: NextRequest) {
 
     for (const report of allShortages) {
       uniqueEmployees.add(report.employeeId)
-      const medKey = report.medicineId
+      const normStrength = (report.medicine.strength || '').toLowerCase().replace(/\s+/g, '')
+      const normBrand = (report.medicine.brandName || '').toLowerCase().trim()
+      const normDosage = (report.medicine.dosageForm || '').toLowerCase().trim()
+      const mfgId = report.medicine.manufacturerId || report.medicine.manufacturer?.id || ''
+      const medKey = `${mfgId}___${normBrand}___${normStrength}___${normDosage}`
 
       if (!map.has(medKey)) {
         map.set(medKey, {
@@ -240,6 +245,80 @@ export async function POST(req: NextRequest) {
 
     const todayStr = (body.date as string) || getLocalDateString()
 
+    // Check if this employee already reported this exact medicine OR an identical medicine today
+    const normStrength = (medicine.strength || '').toLowerCase().replace(/\s+/g, '')
+    const normBrand = (medicine.brandName || '').toLowerCase().trim()
+    const normDosage = (medicine.dosageForm || '').toLowerCase().trim()
+
+    const todayEmployeeShortages = await prisma.shortage.findMany({
+      where: {
+        employeeId: user.userId,
+        reportedDate: todayStr,
+      },
+      include: {
+        medicine: true,
+      },
+    })
+
+    const existingShortage = todayEmployeeShortages.find((s) => {
+      if (s.medicineId === medicine.id) return true
+      const sStrength = (s.medicine.strength || '').toLowerCase().replace(/\s+/g, '')
+      const sBrand = (s.medicine.brandName || '').toLowerCase().trim()
+      const sDosage = (s.medicine.dosageForm || '').toLowerCase().trim()
+      return (
+        s.medicine.manufacturerId === medicine.manufacturerId &&
+        sBrand === normBrand &&
+        sStrength === normStrength &&
+        sDosage === normDosage
+      )
+    })
+
+    if (existingShortage) {
+      // If user provided a specific quantity, update the existing report
+      if (quantity !== undefined && quantity !== null) {
+        const updatedShortage = await prisma.shortage.update({
+          where: { id: existingShortage.id },
+          data: {
+            quantity: quantity,
+            unit: unit || existingShortage.unit || medicine.purchaseUnit || 'Box',
+            notes: notes !== undefined ? (notes ? notes : null) : existingShortage.notes,
+            reportedAt: new Date(),
+          },
+          include: {
+            medicine: {
+              include: {
+                manufacturer: {
+                  select: { id: true, name: true, shortName: true },
+                },
+              },
+            },
+          },
+        })
+
+        notifyShortageChange('update', {
+          shortageId: existingShortage.id,
+          medicineId: updatedShortage.medicine.id,
+          brandName: updatedShortage.medicine.brandName,
+        })
+
+        return NextResponse.json({
+          success: true,
+          message: `${medicine.brandName} ${medicine.strength} quantity updated to ${quantity} ${unit || updatedShortage.unit || 'Box'}`,
+          shortage: updatedShortage,
+          isDuplicate: true,
+          updated: true,
+        })
+      }
+
+      // If no quantity provided (e.g. 1-tap quick add), return friendly message without creating duplicate row
+      return NextResponse.json({
+        success: true,
+        message: `${medicine.brandName} ${medicine.strength} is already in your shortlist today`,
+        shortage: existingShortage,
+        isDuplicate: true,
+      })
+    }
+
     const shortage = await prisma.shortage.create({
       data: {
         medicineId: medicine.id,
@@ -259,6 +338,12 @@ export async function POST(req: NextRequest) {
           },
         },
       },
+    })
+
+    notifyShortageChange('create', {
+      medicineId: medicine.id,
+      brandName: medicine.brandName,
+      employeeId: user.userId,
     })
 
     return NextResponse.json({

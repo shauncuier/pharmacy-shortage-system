@@ -1,6 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  compress: true,
+  poweredByHeader: false,
   // Allow all local network origins to connect to the dev server without CORS / origin blocking
   allowedDevOrigins: [
     '192.168.*.*',

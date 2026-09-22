@@ -4,6 +4,7 @@ import { getCurrentUser } from '@/lib/auth'
 import { Role, ShortageStatus } from '@prisma/client'
 import { createAuditLog } from '@/lib/audit'
 import { getLocalDateString } from '@/lib/date-utils'
+import { notifyShortageChange } from '@/lib/shortage-events'
 
 export async function POST(req: NextRequest) {
   try {
@@ -52,6 +53,8 @@ export async function POST(req: NextRequest) {
       userId: user.userId,
       details: `Bulk updated ${result.count} shortages to status ${targetStatus} for date ${date}.`,
     })
+
+    notifyShortageChange('bulk-review', { count: result.count, status: targetStatus })
 
     return NextResponse.json({
       success: true,

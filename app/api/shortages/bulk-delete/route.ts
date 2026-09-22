@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { getCurrentUser } from '@/lib/auth'
 import { Role } from '@prisma/client'
 import { createAuditLog } from '@/lib/audit'
+import { notifyShortageChange } from '@/lib/shortage-events'
 
 export async function POST(req: NextRequest) {
   try {
@@ -28,6 +29,8 @@ export async function POST(req: NextRequest) {
       userId: user.userId,
       details: `Admin ${user.name} (${user.employeeId}) bulk deleted ${result.count} shortages.`,
     })
+
+    notifyShortageChange('bulk-delete', { deletedCount: result.count })
 
     return NextResponse.json({
       success: true,

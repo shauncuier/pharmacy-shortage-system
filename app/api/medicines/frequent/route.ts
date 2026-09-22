@@ -2,11 +2,21 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getCurrentUser } from '@/lib/auth'
 
+let cachedFrequent: { data: any[]; expiresAt: number } | null = null
+
 export async function GET() {
   try {
     const user = await getCurrentUser()
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    // Serve from 60-second in-memory cache if fresh
+    if (cachedFrequent && Date.now() < cachedFrequent.expiresAt) {
+      return NextResponse.json(
+        { frequent: cachedFrequent.data },
+        { headers: { 'Cache-Control': 'private, max-age=60', 'X-Cache': 'HIT' } }
+      )
     }
 
     // Find top reported medicines in the system
@@ -69,7 +79,12 @@ export async function GET() {
       frequentMedicines = [...frequentMedicines, ...backfill]
     }
 
-    return NextResponse.json({ frequent: frequentMedicines })
+    cachedFrequent = { data: frequentMedicines, expiresAt: Date.now() + 60000 }
+
+    return NextResponse.json(
+      { frequent: frequentMedicines },
+      { headers: { 'Cache-Control': 'private, max-age=60', 'X-Cache': 'MISS' } }
+    )
   } catch (error) {
     console.error('Frequent medicines error:', error)
     return NextResponse.json({ error: 'Failed to load frequent medicines' }, { status: 500 })

@@ -17,7 +17,9 @@ import {
 } from 'lucide-react'
 import Link from 'next/link'
 import { ToastContainer, ToastMessage } from '@/components/Toast'
+import { CopyShortlistButton } from '@/components/CopyShortlistButton'
 import { getLocalDateString } from '@/lib/date-utils'
+import { useDynamicShortages } from '@/lib/use-dynamic-shortages'
 
 interface ShortageItem {
   id: string
@@ -72,9 +74,9 @@ export default function AdminShortagesPage() {
     setToasts((prev) => [...prev, { id: Date.now().toString(), type, text }])
   }
 
-  const loadShortages = async () => {
+  const loadShortages = async (silent = false) => {
     try {
-      setLoading(true)
+      if (!silent) setLoading(true)
       const query = new URLSearchParams()
       if (dateFilter) query.set('date', dateFilter)
       if (statusFilter !== 'ALL') query.set('status', statusFilter)
@@ -85,10 +87,12 @@ export default function AdminShortagesPage() {
         setShortages(data.rawReports || [])
       }
     } catch (err) {
-      console.error('Error loading shortages:', err)
-      addToast('error', 'Failed to load shortage list')
+      if (!silent) {
+        console.error('Error loading shortages:', err)
+        addToast('error', 'Failed to load shortage list')
+      }
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }
 
@@ -96,6 +100,12 @@ export default function AdminShortagesPage() {
     setSelectedIds([])
     loadShortages()
   }, [dateFilter, statusFilter])
+
+  // Instant dynamic multi-user sync
+  useDynamicShortages({
+    onUpdate: () => loadShortages(true),
+    pollIntervalMs: 3000,
+  })
 
   // Delete shortage
   const handleDelete = async (id: string, name: string) => {
@@ -290,17 +300,25 @@ export default function AdminShortagesPage() {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <CopyShortlistButton
+            items={filteredShortages}
+            className="h-10"
+            options={{
+              date: dateFilter,
+            }}
+            onToast={addToast}
+          />
           <Link
             href={`/admin/print?date=${dateFilter}`}
-            className="px-3.5 py-2 bg-sky-600 hover:bg-sky-700 text-white font-bold rounded-xl text-xs shadow-xs flex items-center gap-1.5 transition-colors"
+            className="h-10 px-3.5 bg-sky-600 hover:bg-sky-700 text-white font-bold rounded-xl text-xs shadow-xs flex items-center gap-1.5 transition-colors"
           >
             <Printer className="w-4 h-4" />
             <span>Print View</span>
           </Link>
           <button
             onClick={handleExportCSV}
-            className="px-3.5 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded-xl text-xs shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+            className="h-10 px-3.5 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded-xl text-xs shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
           >
             <Download className="w-4 h-4" />
             <span>Export CSV</span>
@@ -384,7 +402,7 @@ export default function AdminShortagesPage() {
             )}
 
             <button
-              onClick={loadShortages}
+              onClick={() => loadShortages(false)}
               className="text-slate-400 hover:text-sky-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
               title="Reload records"
             >

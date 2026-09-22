@@ -13,11 +13,14 @@ import {
   RefreshCw,
   Sparkles,
   Pencil,
+  Plus,
 } from 'lucide-react'
 import { Navbar } from '@/components/Navbar'
 import { ToastContainer, ToastMessage } from '@/components/Toast'
 import { PwaInstallBanner } from '@/components/PwaInstallBanner'
 import { ShortageAddModal, SelectedMedicine } from '@/components/ShortageAddModal'
+import { CopyShortlistButton } from '@/components/CopyShortlistButton'
+import { useDynamicShortages } from '@/lib/use-dynamic-shortages'
 
 import { Role } from '@prisma/client'
 
@@ -75,14 +78,14 @@ export function EmployeeShortageClient({ user }: EmployeeShortageClientProps) {
   const [modalOpen, setModalOpen] = useState(false)
   const [toasts, setToasts] = useState<ToastMessage[]>([])
 
-  const addToast = (type: 'success' | 'error' | 'info', text: string) => {
-    const id = Date.now().toString() + Math.random().toString()
+  const addToast = useCallback((type: 'success' | 'error' | 'info', text: string) => {
+    const id = Date.now().toString() + '-' + Math.random().toString(36).substring(2, 9)
     setToasts((prev) => [...prev, { id, type, text }])
-  }
+  }, [])
 
-  const dismissToast = (id: string) => {
+  const dismissToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id))
-  }
+  }, [])
 
   // Edit My Report state
   const [editingReport, setEditingReport] = useState<ShortageReport | null>(null)
@@ -90,6 +93,59 @@ export function EmployeeShortageClient({ user }: EmployeeShortageClientProps) {
   const [editUnit, setEditUnit] = useState<string>('Box')
   const [editNotes, setEditNotes] = useState<string>('')
   const [savingEdit, setSavingEdit] = useState<boolean>(false)
+
+  // 1-Tap Instant Quick Add for Mobile
+  const [quickAddingId, setQuickAddingId] = useState<string | null>(null)
+
+  const handleQuickAdd = async (e: React.MouseEvent, med: SelectedMedicine) => {
+    e.stopPropagation()
+
+    // Prevent duplicate submission on client
+    const alreadyExists = myReports.some(
+      (r) =>
+        r.medicine.id === med.id ||
+        (r.medicine.brandName.toLowerCase() === med.brandName.toLowerCase() &&
+          r.medicine.strength.toLowerCase().replace(/\s+/g, '') ===
+            med.strength.toLowerCase().replace(/\s+/g, '') &&
+          r.medicine.dosageForm.toLowerCase() === med.dosageForm.toLowerCase())
+    )
+
+    if (alreadyExists) {
+      addToast('info', `${med.brandName} ${med.strength} is already on your shortage list today`)
+      return
+    }
+
+    setQuickAddingId(med.id)
+
+    try {
+      const res = await fetch('/api/shortages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          medicineId: med.id,
+          quantity: null,
+          unit: med.purchaseUnit || 'Box',
+          notes: null,
+        }),
+      })
+
+      const data = await res.json()
+      if (res.ok) {
+        if (data.isDuplicate) {
+          addToast('info', data.message)
+        } else {
+          addToast('success', `⚡ Added ${med.brandName} ${med.strength} to Shortlist!`)
+        }
+        loadMyReports(true)
+      } else {
+        addToast('error', data.error || 'Failed to add shortage')
+      }
+    } catch {
+      addToast('error', 'Network error adding shortage')
+    } finally {
+      setTimeout(() => setQuickAddingId(null), 700)
+    }
+  }
 
   const openEditModal = (report: ShortageReport) => {
     setEditingReport(report)
@@ -153,9 +209,9 @@ export function EmployeeShortageClient({ user }: EmployeeShortageClientProps) {
   }
 
   // 3. Load today's reports by current employee
-  const loadMyReports = async () => {
+  const loadMyReports = async (silent = false) => {
     try {
-      setLoadingReports(true)
+      if (!silent) setLoadingReports(true)
       const res = await fetch('/api/shortages?mode=my')
       if (res.ok) {
         const data = await res.json()
@@ -167,11 +223,17 @@ export function EmployeeShortageClient({ user }: EmployeeShortageClientProps) {
         setMyReports(reportsList)
       }
     } catch (err) {
-      console.error('Error loading my reports:', err)
+      if (!silent) console.error('Error loading my reports:', err)
     } finally {
-      setLoadingReports(false)
+      if (!silent) setLoadingReports(false)
     }
   }
+
+  // Instant dynamic multi-user sync
+  useDynamicShortages({
+    onUpdate: () => loadMyReports(true),
+    pollIntervalMs: 4000,
+  })
 
   // 4. Ultra-fast dynamic search with client cache and abort controller
   const performSearch = useCallback(async (searchTerm: string) => {
@@ -198,6 +260,20 @@ export function EmployeeShortageClient({ user }: EmployeeShortageClientProps) {
     const controller = new AbortController()
     abortControllerRef.current = controller
 
+    // Instant 0ms optimistic match from frequent medicines while network returns
+    if (frequentMedicines.length > 0) {
+      const quickMatches = frequentMedicines.filter(
+        (m) =>
+          m.brandName.toLowerCase().startsWith(q) ||
+          m.brandName.toLowerCase().includes(q) ||
+          m.genericName.toLowerCase().startsWith(q)
+      )
+      if (quickMatches.length > 0) {
+        setSearchResults(quickMatches)
+        setSelectedIndex(0)
+      }
+    }
+
     setSearching(true)
     try {
       const res = await fetch(`/api/medicines/search?q=${encodeURIComponent(q)}&limit=30`, {
@@ -218,9 +294,9 @@ export function EmployeeShortageClient({ user }: EmployeeShortageClientProps) {
     } finally {
       setSearching(false)
     }
-  }, [])
+  }, [frequentMedicines])
 
-  // Fast reactive debounce (50ms)
+  // Ultra-fast reactive debounce (25ms)
   useEffect(() => {
     const q = query.trim()
     if (!q) {
@@ -229,9 +305,15 @@ export function EmployeeShortageClient({ user }: EmployeeShortageClientProps) {
       return
     }
 
+    // If already in client cache, return synchronously in 0ms!
+    if (clientCacheRef.current.has(q.toLowerCase())) {
+      performSearch(q)
+      return
+    }
+
     const timer = setTimeout(() => {
       performSearch(q)
-    }, 50)
+    }, 25)
 
     return () => clearTimeout(timer)
   }, [query, performSearch])
@@ -314,7 +396,11 @@ export function EmployeeShortageClient({ user }: EmployeeShortageClientProps) {
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 flex flex-col pb-12">
+    <div
+      className={`min-h-screen bg-slate-100 flex flex-col ${
+        myReports.length > 0 ? 'pb-24 sm:pb-12' : 'pb-12'
+      }`}
+    >
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
       <Navbar user={user} />
       <PwaInstallBanner />
@@ -388,6 +474,15 @@ export function EmployeeShortageClient({ user }: EmployeeShortageClientProps) {
                 ) : (
                   searchResults.map((med, index) => {
                     const isSelected = index === selectedIndex
+                    const isAlreadyReported = myReports.some(
+                      (r) =>
+                        r.medicine.id === med.id ||
+                        (r.medicine.brandName.toLowerCase() === med.brandName.toLowerCase() &&
+                          r.medicine.strength.toLowerCase().replace(/\s+/g, '') ===
+                            med.strength.toLowerCase().replace(/\s+/g, '') &&
+                          r.medicine.dosageForm.toLowerCase() === med.dosageForm.toLowerCase())
+                    )
+
                     return (
                       <div
                         key={med.id}
@@ -420,10 +515,54 @@ export function EmployeeShortageClient({ user }: EmployeeShortageClientProps) {
                         </div>
 
                         <div className="flex items-center gap-1.5 shrink-0">
-                          <span className="text-xs font-bold text-sky-600 bg-sky-50 px-2.5 py-1.5 rounded-lg border border-sky-200 hover:bg-sky-600 hover:text-white transition-all flex items-center gap-1">
-                            <span>Add</span>
-                            <ChevronRight className="w-3 h-3" />
-                          </span>
+                          {/* 1-Tap Quick Add (No modal needed) */}
+                          {isAlreadyReported ? (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                addToast(
+                                  'info',
+                                  `${med.brandName} ${med.strength} is already in your shortlist today`
+                                )
+                              }}
+                              className="px-2.5 py-1.5 text-xs font-bold rounded-xl transition-all flex items-center gap-1 cursor-pointer bg-emerald-50 text-emerald-700 border border-emerald-300 hover:bg-emerald-100"
+                              title="Already added to today's shortlist"
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>In List</span>
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={(e) => handleQuickAdd(e, med)}
+                              disabled={quickAddingId === med.id}
+                              className={`px-3 py-2 text-xs font-bold rounded-xl transition-all flex items-center gap-1 cursor-pointer shadow-xs active:scale-95 ${
+                                quickAddingId === med.id
+                                  ? 'bg-emerald-600 text-white'
+                                  : 'bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white'
+                              }`}
+                              title="Instant 1-tap add to shortages"
+                            >
+                              {quickAddingId === med.id ? (
+                                <CheckCircle2 className="w-3.5 h-3.5 animate-in zoom-in" />
+                              ) : (
+                                <Plus className="w-3.5 h-3.5" />
+                              )}
+                              <span>{quickAddingId === med.id ? 'Added' : 'Short'}</span>
+                            </button>
+                          )}
+
+                          {/* Open custom quantity modal */}
+                          <button
+                            type="button"
+                            onClick={() => handleSelectMedicine(med)}
+                            className="p-2 text-slate-400 hover:text-sky-600 hover:bg-sky-50 active:bg-sky-100 rounded-xl transition-colors cursor-pointer"
+                            title="Add with quantity or notes"
+                            aria-label="Add with quantity"
+                          >
+                            <ChevronRight className="w-4 h-4" />
+                          </button>
                         </div>
                       </div>
                     )
@@ -469,7 +608,7 @@ export function EmployeeShortageClient({ user }: EmployeeShortageClientProps) {
         </div>
 
         {/* Today's My Reports */}
-        <div className="bg-white rounded-2xl p-4 shadow-xs border border-slate-200 flex-1 flex flex-col">
+        <div id="my-shortlist-section" className="bg-white rounded-2xl p-4 shadow-xs border border-slate-200 flex-1 flex flex-col scroll-mt-4">
           <div className="flex items-center justify-between pb-3 border-b border-slate-100">
             <div>
               <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
@@ -480,13 +619,22 @@ export function EmployeeShortageClient({ user }: EmployeeShortageClientProps) {
               </h2>
               <p className="text-[11px] text-slate-400">Submissions made by you today</p>
             </div>
-            <button
-              onClick={loadMyReports}
-              className="text-slate-400 hover:text-sky-600 p-1 rounded-lg cursor-pointer"
-              title="Refresh my reports"
-            >
-              <RefreshCw className={`w-4 h-4 ${loadingReports ? 'animate-spin' : ''}`} />
-            </button>
+            <div className="flex items-center gap-1.5">
+              <CopyShortlistButton
+                items={myReports}
+                variant="compact"
+                className="h-8"
+                buttonText="Copy List"
+                onToast={addToast}
+              />
+              <button
+                onClick={() => loadMyReports(false)}
+                className="w-8 h-8 flex items-center justify-center text-slate-400 hover:text-sky-600 rounded-lg cursor-pointer hover:bg-slate-100 transition-colors"
+                title="Refresh my reports"
+              >
+                <RefreshCw className={`w-4 h-4 ${loadingReports ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
           </div>
 
           <div className="mt-3 flex-1">
@@ -600,6 +748,55 @@ export function EmployeeShortageClient({ user }: EmployeeShortageClientProps) {
             </a>
           </p>
         </footer>
+
+        {/* Mobile Sticky Floating Shortlist Bar */}
+        {myReports.length > 0 && (
+          <div className="fixed bottom-0 left-0 right-0 px-4 py-2.5 bg-white/95 backdrop-blur-md border-t border-slate-200 shadow-[0_-8px_20px_-6px_rgba(0,0,0,0.1)] z-40 md:hidden flex items-center justify-between gap-3 safe-area-inset-bottom">
+            <button
+              type="button"
+              onClick={() =>
+                document
+                  .getElementById('my-shortlist-section')
+                  ?.scrollIntoView({ behavior: 'smooth' })
+              }
+              className="min-w-0 flex-1 text-left cursor-pointer active:opacity-75 transition-opacity"
+            >
+              <div className="flex items-center gap-1.5">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span className="text-xs font-black text-slate-900 truncate">
+                  Shortlist ({myReports.length})
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-500 truncate mt-0.5">
+                {myReports.slice(0, 2).map((r) => r.medicine.brandName).join(', ')}
+                {myReports.length > 2 ? ` +${myReports.length - 2} more` : ''}
+              </p>
+            </button>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() =>
+                  document
+                    .getElementById('my-shortlist-section')
+                    ?.scrollIntoView({ behavior: 'smooth' })
+                }
+                className="h-10 px-3 bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 text-xs font-bold rounded-xl transition-colors shadow-xs flex items-center justify-center gap-1 cursor-pointer"
+                title="View shortage list"
+              >
+                <span>View</span>
+              </button>
+
+              <CopyShortlistButton
+                items={myReports}
+                buttonText={`Copy (${myReports.length})`}
+                className="h-10"
+                dropdownDirection="up"
+                onToast={addToast}
+              />
+            </div>
+          </div>
+        )}
       </main>
 
       {/* Shortage Add Modal / Bottom Drawer */}

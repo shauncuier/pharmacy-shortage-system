@@ -60,8 +60,13 @@ export async function setSessionCookie(payload: Omit<SessionPayload, 'expiresAt'
 }
 
 export async function clearSessionCookie() {
-  const cookieStore = await cookies()
-  cookieStore.delete(COOKIE_NAME)
+  try {
+    const cookieStore = await cookies()
+    cookieStore.delete(COOKIE_NAME)
+  } catch {
+    // Next.js throws when modifying cookies during Server Component rendering.
+    // Safely ignore here; Route Handlers (e.g. /api/auth/logout) will handle deletion.
+  }
 }
 
 export async function getCurrentUser(): Promise<SessionPayload | null> {

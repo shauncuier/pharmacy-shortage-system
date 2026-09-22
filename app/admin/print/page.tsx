@@ -17,6 +17,9 @@ import {
   ListFilter,
   RotateCcw,
 } from 'lucide-react'
+import { CopyShortlistButton } from '@/components/CopyShortlistButton'
+import { ToastContainer, ToastMessage } from '@/components/Toast'
+import { useDynamicShortages } from '@/lib/use-dynamic-shortages'
 
 interface PrintShortageItem {
   medicineId: string
@@ -53,30 +56,41 @@ function PrintShortageContent() {
   const [loading, setLoading] = useState(true)
   const [pharmacyName, setPharmacyName] = useState('Bara-Awlia Medical Hall')
   const [generatedTime, setGeneratedTime] = useState('')
+  const [toasts, setToasts] = useState<ToastMessage[]>([])
+
+  const addToast = (type: 'success' | 'error' | 'info', text: string) => {
+    setToasts((prev) => [...prev, { id: Date.now().toString(), type, text }])
+  }
 
   useEffect(() => {
     setGeneratedTime(new Date().toLocaleTimeString())
   }, [])
 
   // Load shortage data for the selected date
-  const loadData = async (date: string) => {
+  const loadData = async (date: string, silent = false) => {
     try {
-      setLoading(true)
+      if (!silent) setLoading(true)
       const res = await fetch(`/api/shortages?date=${date}`)
       if (res.ok) {
         const data = await res.json()
         setItems(data.consolidated || [])
       }
     } catch (err) {
-      console.error('Failed to load print shortages:', err)
+      if (!silent) console.error('Failed to load print shortages:', err)
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }
 
   useEffect(() => {
     loadData(selectedDate)
   }, [selectedDate])
+
+  // Instant dynamic multi-user data load
+  useDynamicShortages({
+    onUpdate: () => loadData(selectedDate, true),
+    pollIntervalMs: 3000,
+  })
 
   // Sync initial query params if they change
   useEffect(() => {
@@ -242,6 +256,11 @@ function PrintShortageContent() {
 
   return (
     <div className="space-y-6">
+      <ToastContainer
+        toasts={toasts}
+        onDismiss={(id) => setToasts((prev) => prev.filter((t) => t.id !== id))}
+      />
+
       {/* Top Action & Filter Controls (Hidden when printing) */}
       <div className="no-print bg-white rounded-2xl p-4 sm:p-5 shadow-xs border border-slate-200 space-y-4">
         {/* Row 1: Primary Controls & Print Buttons */}
@@ -278,10 +297,22 @@ function PrintShortageContent() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <CopyShortlistButton
+              items={filteredItems}
+              options={{
+                pharmacyName,
+                date: selectedDate,
+                filterBrand: selectedBrand,
+                filterManufacturer: selectedManufacturer,
+              }}
+              onToast={addToast}
+              buttonText={isFiltered ? `Copy Filtered (${filteredItems.length})` : `Copy Shortlist (${items.length})`}
+            />
+
             <button
               onClick={handleExportCSV}
               disabled={filteredItems.length === 0}
-              className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-800 font-bold rounded-xl text-xs flex items-center gap-1.5 border border-slate-300 transition-colors cursor-pointer"
+              className="h-10 px-3.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-800 font-bold rounded-xl text-xs flex items-center gap-1.5 border border-slate-300 transition-colors cursor-pointer"
               title="Download CSV for current view"
             >
               <Download className="w-4 h-4" />
@@ -292,7 +323,7 @@ function PrintShortageContent() {
             <button
               onClick={handlePrintAll}
               disabled={items.length === 0}
-              className="px-4 py-2 bg-slate-900 hover:bg-black disabled:opacity-50 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
+              className="h-10 px-4 bg-slate-900 hover:bg-black disabled:opacity-50 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
               title="Print all shortages for this date without any filter"
             >
               <Printer className="w-4 h-4 text-sky-400" />
@@ -304,7 +335,7 @@ function PrintShortageContent() {
               <button
                 onClick={handlePrintFiltered}
                 disabled={filteredItems.length === 0}
-                className="px-4 py-2 bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-md transition-colors cursor-pointer animate-pulse"
+                className="h-10 px-4 bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-md transition-colors cursor-pointer animate-pulse"
                 title="Print only the filtered medicines"
               >
                 <Printer className="w-4 h-4" />
